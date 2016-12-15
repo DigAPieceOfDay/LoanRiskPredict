@@ -1,7 +1,7 @@
 library(data.table)
 library(dplyr)
 library(randomForest)
-library(xgboost)s
+library(xgboost)
 library(ggplot2)
 
 library(bit64)
@@ -81,11 +81,10 @@ library(bit64)
 # 假设f(s|P)为正样本预测值的累积分布函数(cdf),f(s|N)为负样本预测值的累积分布函数，则
 #    KS =  max{|f(s|P)-f(s|N)|}
 
-# 载入数据
+# 1.载入数据
 # 用户的基本属性user_info_train.txt
 user.info.train <- fread("./data/train/user_info_train.txt",header = F)
 colnames(user.info.train) <- c("usrId","gender","profession","education","marital","nodetype")
-
 
 # 银行流水记录bank_detail.txt
 bank.detail <- fread("./data/train/bank_detail_train.txt",header = F)
@@ -110,3 +109,20 @@ colnames(loan.time) <- c("usrId","lendingtime")
 # 顾客是否发生逾期行为的记录overdue.txt
 overdue <- fread("./data/train/overdue_train.txt")
 colnames(overdue) <- c("usrId","samplelabel")
+
+# 2.数据清洗整合
+
+# 对于银行流水记录数据一个用户对应多条记录，这里我们采用对每个用户每种交易类型
+# 取均值进行聚合
+bank.detail.gather <- bank.detail %>% group_by(usrId,transactionType) %>% 
+  summarise(transactionSum = mean(transactionSum))
+  
+# 对于用户浏览数据，计算每个用户总浏览行为次数进行聚合
+browse.history.gather <- browse.history  %>% group_by(usrId) %>% 
+  summarise(browseaction=sum(browseaction))
+
+# 对于信用卡账单数据按id取均值
+bill.detail.gather <- bill.detail %>% group_by(usrId) %>% 
+  summarise(lastbillsum = mean(lastbillsum),
+            lastrepaysum= mean(lastrepaysum),
+            )
