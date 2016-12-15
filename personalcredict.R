@@ -1,11 +1,3 @@
-library(data.table)
-library(dplyr)
-library(randomForest)
-library(xgboost)
-library(ggplot2)
-
-library(bit64)
-
 # 数据
 # 1）数据总体概述     
 #  参赛者可用的训练数据包括用户的基本属性user_info.txt、银行流水记录bank_detail.txt、
@@ -81,6 +73,14 @@ library(bit64)
 # 假设f(s|P)为正样本预测值的累积分布函数(cdf),f(s|N)为负样本预测值的累积分布函数，则
 #    KS =  max{|f(s|P)-f(s|N)|}
 
+library(data.table)
+library(dplyr)
+library(randomForest)
+library(xgboost)
+library(ggplot2)
+
+library(bit64)
+
 # 1.载入数据
 # 用户的基本属性user_info_train.txt
 user.info.train <- fread("./data/train/user_info_train.txt",header = F)
@@ -126,3 +126,70 @@ bill.detail.gather <- bill.detail %>% group_by(usrId) %>%
   summarise(lastbillsum = mean(lastbillsum),
             lastrepaysum= mean(lastrepaysum),
             )
+
+#---------------------------------------------------------------------------------
+loan_data <- fread("./output/loan_data.csv",header = T)
+
+# # 构建模型
+# 分开训练集、测试集
+status <- overdue$samplelabel
+train <- data.frame(loan_data[1:nrow(overdue),],status=status)
+test <- loan_data[55597:nrow(loan_data),]
+
+# 将训练集划分为7:3
+library(caret)
+set.seed(27)
+val_index <- createDataPartition(train$status,p = 0.7, list=FALSE)
+val_train_data <- train[val_index, ]
+val_test_data  <- train[-val_index, ]
+val_train_X <- val_train_data[,-1]
+val_test_X <- val_test_data[,-1]
+
+
+# 转换为matrix
+matrix_train <- apply(val_train_X, 2, function(x) as.numeric(as.character(x)))
+matrix_test <- apply(val_test_X, 2, function(x) as.numeric(as.character(x)))
+
+xgb_train_matrix <- xgb.DMatrix(data = as.matrix(matrix_train), label = val_train_X$status)
+xgb_test_matrix <- xgb.DMatrix(data = as.matrix(matrix_test), label = val_test_X$status)
+
+watchlist <- list(train = xgb_train_matrix, test = xgb_test_matrix)
+label <- getinfo(xgb_test_matrix, "label")
+
+# using cross validation to evaluate the error rate.
+param <- list("objective" = "binary:logistic")
+
+# croos-validation 
+bst <- xgb.cv(param = param, 
+       data = xgb_train_matrix, 
+       nfold = 3,
+       label = getinfo(xgb_train_matrix, "label"),
+       nrounds = 5)
+
+# (1)Training with gbtree
+bst_1 <- xgb.train(data = xgb_train_matrix, 
+                   label = getinfo(xgb_train_matrix, "label"),
+                   max.depth = 2, 
+                   eta = 1, 
+                   nthread = 4, 
+                   nround = 50, # number of trees used for model building
+                   watchlist = watchlist, 
+                   objective = "binary:logistic")
+
+# obtain important feature
+features <- colnames(matrix_train)
+importance_matrix_1 <- xgb.importance(features, model = bst_1)
+print(importance_matrix_1)
+
+xgb.plot.importance(importance_matrix_1) +
+  theme_minimal()
+
+# predict 
+pred_1 <- predict(bst_1, xgb_test_matrix)
+result_1 <- data.frame(usrId = rownames(val_test_data),
+                       status = val_test_data$status, 
+                       label = label, 
+                       prediction_p_loan = round(pred_1, digits = 2),
+                       prediction = as.integer(pred_1 > 0.5),
+                       prediction_eval = ifelse(as.integer(pred_1 > 0.5) != label, "wrong", "correct"))
+result_1
