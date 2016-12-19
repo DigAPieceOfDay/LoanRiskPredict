@@ -127,7 +127,7 @@ bill.detail.gather <- bill.detail %>% group_by(usrId) %>%
             lastrepaysum= mean(lastrepaysum),
             )
 
-#---------------------------------------------------------------------------------
+#---------------------------------- xgboost test-----------------------------------------------
 loan_data <- fread("./output/loan_data.csv",header = T)
 
 # # 构建模型
@@ -144,7 +144,6 @@ val_train_data <- train[val_index, ]
 val_test_data  <- train[-val_index, ]
 val_train_X <- val_train_data[,-1]
 val_test_X <- val_test_data[,-1]
-
 
 # 转换为matrix
 matrix_train <- apply(val_train_X, 2, function(x) as.numeric(as.character(x)))
@@ -193,3 +192,42 @@ result_1 <- data.frame(usrId = rownames(val_test_data),
                        prediction = as.integer(pred_1 > 0.5),
                        prediction_eval = ifelse(as.integer(pred_1 > 0.5) != label, "wrong", "correct"))
 result_1
+
+#------------------------------------Logistic Regression--------------------------------------------
+
+glm.model <- glm(status~.,data=val_train_X[,-c(3,4,5,19,20)],family=binomial(link="logit"))
+
+n <- nrow(val_train_X) #训练数据的行数，也就是样本数量
+
+R2 <- 1-exp((glm.model$deviance-glm.model$null.deviance)/n) #计算Cox-Snell拟合优度
+cat("Cox-Snell R2=",R2,"\n")
+
+R2 <- R2/(1-exp((-glm.model$null.deviance)/n)) #计算Nagelkerke拟合优度，在最后输出这个拟合优度值
+
+p <- predict(glm.model,val_test_X[,-c(3,4,5,19,20)]) #用模型对测试数据进行预测
+p <- exp(p)/(1+exp(p))
+
+val_test_X$status_predicted = 1*(p>0.5)# 给test数据增加一列，也就是对status的预测，当p>0.5时，预测值为1
+
+true_value = val_test_X[,45]
+predict_value = val_test_X[,46] #分别将true和predict列取出来
+
+retrieved = sum(predict_value)
+precision = sum(true_value & predict_value)/retrieved
+recall = sum(predict_value & true_value)/sum(true_value)
+F_measure = 2*precision*recall/(precision+recall) #计算Recall，Precision和F-measure
+
+summary(glm.model)
+cat("Nagelkerke R2=",R2,"\n")
+print(precision)
+print(recall)
+print(F_measure)
+
+# 待测数据
+test.new <- test[,2:45]
+colnames(test.new) <- colnames(val_train_X[,1:44])
+predict.status <- predict(glm.model,type='response',newdata=test.new)
+res <- data.frame(predict = ifelse(predict.status>0.5,'1','0'))
+
+result <- data.frame(userid=test$userid,probability=predict.status)
+write.csv(result,"output/result_2.csv",row.names = F)
