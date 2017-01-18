@@ -4,7 +4,8 @@ library(randomForest)
 library(xgboost)
 library(ggplot2)
 library(bit64)
-
+library(MASS)
+library(car)
 # 1.载入数据
 # 训练集
 # 用户的基本属性user_info_train.txt
@@ -56,17 +57,19 @@ overdue <- fread("overdue_train.txt",col.names = c("用户ID","样本标签"))
 bill_detail <- merge(bill_detail,loan_time,by="用户ID")
 data <- merge(overdue,user_info,by="用户ID")
 data <- merge(data,loan_time,by="用户ID")
-
 predict.data <- data
-predict.data <- merge(predict.data,
-                      bill_detail[, .(
-                        userbilltime = length(unique(账单时间戳[账单时间戳  >  放款时间])),
-                        userbilltimeone  = length(unique(账单时间戳[账单时间戳  >  放款时间 +1])),
-                        userbilltimetwo  = length(unique(账单时间戳[账单时间戳  >  放款时间 +2]))
-                      ), 用户ID],
+
+# 添加userbilltime变量
+bill_detail<-bill_detail%>%group_by(用户ID)%>%mutate(userbilltime=max(账单时间戳-放款时间))
+predict.data <- merge(predict.data,unique(bill_detail[,c("userbilltime","用户ID")]),
                       by = "用户ID",
                       all.x = T)
+
+                      
+# 填补缺失值                      
 predict.data [is.na(predict.data )] <- 0
+
+# 分类变量转化为因子型
 predict.data$性别<-as.factor(predict.data$性别)
 predict.data$职业<-as.factor(predict.data$职业)
 predict.data$教育层度<-as.factor(predict.data$教育层度)
@@ -74,22 +77,29 @@ predict.data$婚姻状态<-as.factor(predict.data$婚姻状态)
 predict.data$户口类型<-as.factor(predict.data$户口类型)
 predict.data$样本标签<-as.factor(predict.data$样本标签)
 
-library(MASS)
-library(nortest)
-library(car)
+
+# 构建训练集，测试集
 set.seed(123)
 ids<-sample(1:dim(data)[1],10000)
 train<-predict.data[-ids,]%>%filter(userbilltime>0)
 test<-predict.data[ids,]%>%filter(userbilltime>0)
+system.time(
 m<-glm(样本标签~.-用户ID-放款时间,data=train,family=binomial(link="logit"))
+)
+system.time(
 m1<-stepAIC(m,trace=F)
+)
 summary(m1)
-m2<-glm(样本标签~.-用户ID-放款时间-教育层度-户口类型,data=train,family=binomial(link="logit"))
+system.time(
+m2<-glm(样本标签~.-用户ID-放款时间-教育层度-婚姻状态-户口类型,data=train,family=binomial(link="logit"))
+)
 system.time(
 m3<-stepAIC(m2,trace=F)
 )
 summary(m3)
-prediction<-predict(m3,subset(test,select=c(性别,userbilltime,userbilltimeone,userbilltimetwo)),type="response")
+
+# 模型预测及检验
+prediction<-predict(m3,subset(test,select=c(性别,userbilltime),type="response"))
 prediction1<-data.frame(用户ID=test$用户ID,true=test$样本标签,pre=prediction)
 ks.test(prediction1$true,prediction1$pre)
 
@@ -97,7 +107,7 @@ ks.test(prediction1$true,prediction1$pre)
 
 # -----------------------------------测试集--------------------------------------
 # 用户的基本属性user_info_test.txt
-rm(list=ls())
+
 setwd("H:/study/智慧杯大赛/客户违约风险分析/个人征信/test")
 system.time(
   user_info_test <- fread(
@@ -143,17 +153,24 @@ test <- fread("usersID_test.txt",col.names = "用户ID")
 bill_detail_test <- merge(bill_detail_test,loantime_test,by="用户ID")
 test <- merge(test,user_info_test,by="用户ID")
 test <- merge(test,loantime_test,by="用户ID")
-
 predict.data <- test
-predict.data <- merge(predict.data,
-                      bill_detail_test[, .(
-                        userbilltime = length(unique(账单时间戳[账单时间戳  >  放款时间])),
-                        userbilltimeone  = length(unique(账单时间戳[账单时间戳  >  放款时间 +1])),
-                        userbilltimetwo  = length(unique(账单时间戳[账单时间戳  >  放款时间 +2]))
-                      ), 用户ID],
+
+# 添加变量userbilltime
+bill_detail_test<-bill_detail_test%>%group_by(用户ID)%>%mutate(userbilltime=max(账单时间戳-放款时间))
+predict.data <- merge(predict.data,unique(bill_detail_test[,c("userbilltime","用户ID")]),
                       by = "用户ID",
                       all.x = T)
 # 填补缺失值
 predict.data [is.na(predict.data )] <- 0
-predict.data1<-filter(predict.data,userbilltime!=0)
-m4<-glm(样本标签~.-用户ID-放款时间-教育层度-户口类型,data=predict.data,family=binomial(link="logit"))
+
+# 变量转化为因子型
+predict.data$性别<-as.factor(predict.data$性别)
+predict.data$职业<-as.factor(predict.data$职业)
+predict.data$教育层度<-as.factor(predict.data$教育层度)
+predict.data$婚姻状态<-as.factor(predict.data$婚姻状态)
+predict.data$户口类型<-as.factor(predict.data$户口类型)
+
+# 模型预测
+prediction<-predict(m3,subset(predict.data,select=c(性别,userbilltime)),type="response")
+prediction1<-data.frame(userid=test$用户ID,probability=prediction)
+write.csv(prediction1,"result.csv",row.names = F,quote=F)
