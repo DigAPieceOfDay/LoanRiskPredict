@@ -94,4 +94,4 @@ system.time(for(j in n){
 })
 
 auc_value1<-aggregate(data=auc_value,value~ntree,FUN=mean)
-tree<-auc_value1$ntree[which.max(auc_value1$value)]#最优树数量
+tree <- auc_value1$ntree[which.max(auc_value1$value)]#最优树数量
